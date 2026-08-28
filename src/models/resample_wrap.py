@@ -1,54 +1,64 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-resample_wrap.py — ĐỒNG BỘ resampling (session phụ) vào pipeline chính
-======================================================================
-
-Nguồn gốc: `explore_method_resample/` (session song song, 2026-07-11). Keeper của họ =
-**BorderlineSMOTE-1, nâng sàn T=200**, resample LEAK-SAFE chỉ trong fold train.
-
-File này KHÔNG chép lại thuật toán — nó **tái dùng `resample_train()` của
-`explore_method_resample/eval_resample.py`** (một nguồn sự thật, tránh trôi lệch giữa 2 folder).
-Việc của nó là bọc resample thành **estimator sklearn** để:
-  1. Cắm được vào `eval_robust.py` / `eval_model_ab.py` như một model bình thường.
-  2. **KẾT HỢP** được với hierarchical [4] (resample trước, rồi hierarchical train trên dữ liệu đã resample).
-
-⚠️ LEAK-SAFE do CẤU TRÚC: `fit()` chỉ nhìn thấy fold TRAIN (splitter gọi fit trên X_train),
-nên mẫu tổng hợp KHÔNG bao giờ lọt sang test. Đây là lý do resample KHÔNG được "bake" sẵn
-vào train CSV dùng chung (sẽ rò rỉ) — phải là bước TRONG pipeline train.
-"""
-import os
-import sys
-
+"""Leak-safe in-fold resampling used by the locked hierarchical classifier."""
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, ClassifierMixin
+from imblearn.over_sampling import RandomOverSampler, BorderlineSMOTE
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (ROOT, os.path.join(ROOT, "models"), os.path.join(ROOT, "explore_method_resample")):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
 
-from eval_resample import resample_train  # noqa: E402  (một nguồn sự thật — session phụ)
+def floor_strategy(y, target):
+    if target is None or target <= 0:
+        return 'auto'
+    counts = y.value_counts()
+    return {c: target for c, n in counts.items() if n < target}
+
+
+def borderline_resample(X, y, target, seed):
+    """Exact locked Borderline-SMOTE-1 procedure.
+
+    Classes that would not have enough neighbors are first raised to six samples
+    with random oversampling. Borderline-SMOTE then raises all classes below the
+    requested target. Synthetic samples are generated inside the training fold only.
+    """
+    target_classes = list(floor_strategy(y, target).keys())
+    counts = y.value_counts()
+    pre = {c: 6 for c in target_classes if counts.get(c, 0) < 6}
+    X_work, y_work = X, y
+    if pre:
+        X_work, y_work = RandomOverSampler(
+            sampling_strategy=pre, random_state=seed).fit_resample(X_work, y_work)
+    counts = y_work.value_counts()
+    candidates = [counts[c] for c in target_classes if counts.get(c, 0) > 0]
+    minimum = min(candidates) if candidates else 6
+    k = max(1, min(5, int(minimum) - 1))
+    sampler = BorderlineSMOTE(
+        k_neighbors=k,
+        kind='borderline-1',
+        random_state=0,
+        sampling_strategy=floor_strategy(y_work, target),
+    )
+    return sampler.fit_resample(X_work, y_work)
 
 
 class ResampledClassifier(BaseEstimator, ClassifierMixin):
-    """Resample (X,y) của fold TRAIN rồi fit base. base_factory: callable -> estimator mới."""
-
-    def __init__(self, base_factory=None, method="borderline1", target=200, seed=0):
+    def __init__(self, base_factory=None, method='borderline1', target=200, seed=0):
         self.base_factory = base_factory
         self.method = method
         self.target = target
         self.seed = seed
 
     def fit(self, X, y):
-        Xs = pd.DataFrame(np.asarray(X))
-        ys = pd.Series(np.asarray(y))
-        X2, y2 = resample_train(self.method, Xs, ys, self.target, None, self.seed)
-        self.n_before_, self.n_after_ = len(ys), len(y2)
+        X_frame = pd.DataFrame(np.asarray(X))
+        y_series = pd.Series(np.asarray(y))
+        if self.method != 'borderline1':
+            raise ValueError('The reproducibility implementation supports the locked borderline1 method only.')
+        X_resampled, y_resampled = borderline_resample(
+            X_frame, y_series, self.target, self.seed)
+        self.n_before_ = len(y_series)
+        self.n_after_ = len(y_resampled)
         self.base_ = self.base_factory()
-        self.base_.fit(np.asarray(X2), np.asarray(y2))
-        self.classes_ = np.unique(np.asarray(y2))
+        self.base_.fit(np.asarray(X_resampled), np.asarray(y_resampled))
+        self.classes_ = np.unique(np.asarray(y_resampled))
         return self
 
     def predict(self, X):
