@@ -1,0 +1,22 @@
+# Private challenge data
+data/
+*.zip
+
+# Runtime products
+runtime/
+outputs/
+SQ3K_prediction.csv
+*.joblib
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
