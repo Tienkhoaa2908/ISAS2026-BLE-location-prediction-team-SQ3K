@@ -1,0 +1,2 @@
+config,trees,validation,reps,baseline_macro_mean,candidate_macro_mean,paired_delta_mean,paired_delta_std,paired_delta_sem,positive_rep_rate,paired_accuracy_delta,baseline_zero_f1_mean,candidate_zero_f1_mean,estimated_macro_on_trusted_baseline,estimated_accuracy_on_trusted_baseline,candidate_accepted
+strong_plus_local,1200,untouched_reps10_13,"[10, 11, 12, 13]",0.536686916710663,0.5486823604624447,0.011995443751781687,0.005370109677402357,0.0026850548387011785,1.0,0.002324145104667802,1.5,1.5,0.5674254437517816,0.7392241451046678,True
